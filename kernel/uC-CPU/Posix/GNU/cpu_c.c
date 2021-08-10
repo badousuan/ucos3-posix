@@ -128,9 +128,9 @@ static  sigset_t              CPU_IRQ_SigMask;
 *********************************************************************************************************
 */
 
-#if  (_POSIX_C_SOURCE < 199309L)
-#error  "_POSIX_C_SOURCE is required to be at least 199309L"
-#endif
+//#if  (_POSIX_C_SOURCE < 199309L)
+//#error  "_POSIX_C_SOURCE is required to be at least 199309L"
+//#endif
 
 static  void   CPU_IRQ_Handler       (int  sig);
 
@@ -300,7 +300,7 @@ void  CPU_TmrInterruptCreate (CPU_TMR_INTERRUPT  *p_tmr_interrupt)
     if (res != 0u) {
         raise(SIGABRT);
     }
-    param.__sched_priority = CPU_TMR_INT_TASK_PRIO;
+    param.sched_priority = CPU_TMR_INT_TASK_PRIO;
     pthread_attr_setschedpolicy(&attr, SCHED_RR);
     if (res != 0u) {
         raise(SIGABRT);
@@ -925,7 +925,7 @@ static  void  *CPU_TmrInterruptTask (void  *p_arg) {
 
     do {
         tspec_rem = tspec;
-        do {res = clock_nanosleep(CLOCK_MONOTONIC, 0u, &tspec_rem, &tspec_rem); } while (res == EINTR);
+        do {res = nanosleep(&tspec_rem, &tspec_rem); } while (res == EINTR);
         if (res != 0u) { raise(SIGABRT); }
         CPU_InterruptTriggerInternal(&(p_tmr_int->Interrupt));  /* See Note #2.                                         */
     } while (one_shot != DEF_YES);

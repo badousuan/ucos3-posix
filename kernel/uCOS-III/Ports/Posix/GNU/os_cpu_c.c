@@ -74,6 +74,11 @@ const  CPU_CHAR  *os_cpu_c__c = "$Id: $";
 extern  "C" {
 #endif
 
+#include <semaphore.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <assert.h>
+
 
 /*
 *********************************************************************************************************
@@ -81,7 +86,7 @@ extern  "C" {
 *********************************************************************************************************
 */
 
-#define  THREAD_CREATE_PRIO       50u                           /* Tasks underlying posix threads prio.                 */
+#define  THREAD_CREATE_PRIO       40u                           /* Tasks underlying posix threads prio.                 */
 
                                                                 /* Err handling convenience macro.                      */
 #define  ERR_CHK(func)            do {int res = func; \
@@ -101,8 +106,8 @@ extern  "C" {
 typedef  struct  os_tcb_ext_posix {
     pthread_t  Thread;
     pid_t      ProcessId;
-    sem_t      InitSem;
-    sem_t      Sem;
+    sem_t*      InitSem;
+    sem_t*      Sem;
 } OS_TCB_EXT_POSIX;
 
 
@@ -193,14 +198,14 @@ void  OSIdleTaskHook (void)
 
 void  OSInitHook (void)
 {
-    struct  rlimit  rtprio_limits;
+// OSX上无RLIMIT_RTPRIO实现
+//    struct  rlimit  rtprio_limits;
 
-
-    ERR_CHK(getrlimit(RLIMIT_RTPRIO, &rtprio_limits));
-    if (rtprio_limits.rlim_cur != RLIM_INFINITY) {
-        printf("Error: RTPRIO limit is too low. Set to 'unlimited' via 'ulimit -r' or /etc/security/limits.conf\r\n");
-        exit(-1);
-    }
+//    ERR_CHK(getrlimit(RLIMIT_RTPRIO, &rtprio_limits));
+//    if (rtprio_limits.rlim_cur != RLIM_INFINITY) {
+//        printf("Error: RTPRIO limit is too low. Set to 'unlimited' via 'ulimit -r' or /etc/security/limits.conf\r\n");
+//        exit(-1);
+//    }
 
     CPU_IntInit();                                              /* Initialize critical section objects.                 */
 }
@@ -226,6 +231,17 @@ void  OSStatTaskHook (void)
         (*OS_AppStatTaskHookPtr)();
     }
 #endif
+}
+
+/**
+ * create a sem by name "sem_xxxx"
+ */
+static sem_t* createSem(){
+    static uint32_t id = 0;
+    static const uint64_t length = 20 + 4;
+    static char sem_name[length] = {0};
+    sprintf(sem_name, "sem_%d", (id++));
+    return sem_open(sem_name, O_CREAT, 0644, 0);
 }
 
 
@@ -256,13 +272,16 @@ void  OSTaskCreateHook (OS_TCB  *p_tcb)
     p_tcb_ext = malloc(sizeof(OS_TCB_EXT_POSIX));
     p_tcb->ExtPtr = p_tcb_ext;
 
-    ERR_CHK(sem_init(&p_tcb_ext->InitSem, 0u, 0u));
-    ERR_CHK(sem_init(&p_tcb_ext->Sem, 0u, 0u));
+    p_tcb_ext->InitSem= createSem();
+    p_tcb_ext->Sem = createSem();
 
-    OSThreadCreate(&p_tcb_ext->Thread, OSTaskPosix, p_tcb, THREAD_CREATE_PRIO);
+    assert(p_tcb_ext->InitSem != SEM_FAILED);
+    assert(p_tcb_ext->Sem != SEM_FAILED);
+
+    OSThreadCreate(&(p_tcb_ext->Thread), OSTaskPosix, p_tcb, THREAD_CREATE_PRIO);
 
     do {
-        ret = sem_wait(&p_tcb_ext->InitSem);                    /* Wait for init.                                       */
+        ret = sem_wait(p_tcb_ext->InitSem);                    /* Wait for init.                                       */
         if (ret != 0 && errno != EINTR) {
             raise(SIGABRT);
         }
@@ -474,7 +493,7 @@ void  OSStartHighRdy (void)
 
     CPU_INT_DIS();
 
-    ERR_CHK(sem_post(&p_tcb_ext->Sem));
+    ERR_CHK(sem_post(p_tcb_ext->Sem));
 
     ERR_CHK(sigemptyset(&sig_set));
     ERR_CHK(sigaddset(&sig_set, SIGTERM));
@@ -539,11 +558,11 @@ void  OSCtxSw (void)
     OSTCBCurPtr = OSTCBHighRdyPtr;
     OSPrioCur   = OSPrioHighRdy;
 
-    ERR_CHK(sem_post(&p_tcb_ext_new->Sem));
+    ERR_CHK(sem_post(p_tcb_ext_new->Sem));
 
     if (detach == DEF_NO) {
         do {
-            ret = sem_wait(&p_tcb_ext_old->Sem);
+            ret = sem_wait(p_tcb_ext_old->Sem);
             if (ret != 0 && errno != EINTR) {
                 raise(SIGABRT);
             }
@@ -615,6 +634,16 @@ static  void  OSTimeTickHandler (void)
 }
 
 
+static inline uint64_t tls_get_tid() {
+    static __thread uint64_t id = 0;
+    if (id != 0) {
+        return id;
+    } else {
+        pthread_threadid_np(0, &id); // non-posix, supported by BSD
+    }
+    return id;
+}
+
 /*
 *********************************************************************************************************
 *                                      OSTaskPosix()
@@ -637,8 +666,9 @@ static void  *OSTaskPosix (void  *p_arg)
     p_tcb     = (OS_TCB           *)p_arg;
     p_tcb_ext = (OS_TCB_EXT_POSIX *)p_tcb->ExtPtr;
 
-    p_tcb_ext->ProcessId = syscall(SYS_gettid);
-    ERR_CHK(sem_post(&p_tcb_ext->InitSem));
+    // p_tcb_ext->ProcessId = syscall(SYS_gettid);  // osx废弃
+    p_tcb_ext->ProcessId = tls_get_tid();
+    ERR_CHK(sem_post(p_tcb_ext->InitSem));
 
 #ifdef OS_CFG_MSG_TRACE_EN
     if (p_tcb->NamePtr != DEF_NULL) {
@@ -650,7 +680,7 @@ static void  *OSTaskPosix (void  *p_arg)
     {
         int ret = -1u;
         while (ret != 0u) {
-            ret = sem_wait(&p_tcb_ext->Sem);                    /* Wait until first CTX SW.                             */
+            ret = sem_wait(p_tcb_ext->Sem);                    /* Wait until first CTX SW.                             */
             if ((ret != 0) && (ret != -EINTR)) {
                 ERR_CHK(ret);
             }
@@ -731,7 +761,7 @@ static  void  OSThreadCreate (pthread_t  *p_thread,
 
     ERR_CHK(pthread_attr_init(&attr));
     ERR_CHK(pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED));
-    param.__sched_priority = prio;
+    param.sched_priority = prio;
     ERR_CHK(pthread_attr_setschedpolicy(&attr, SCHED_RR));
     ERR_CHK(pthread_attr_setschedparam(&attr, &param));
     ERR_CHK(pthread_create(p_thread, &attr, p_task, p_arg));
