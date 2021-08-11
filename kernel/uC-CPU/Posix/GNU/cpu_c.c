@@ -93,7 +93,7 @@ extern  "C" {
 
 #define  CPU_TMR_INT_TASK_PRIO         sched_get_priority_max(SCHED_RR)     /* Tmr interrupt task priority.             */
 #define  CPU_IRQ_SIG                  (SIGURG)                              /* IRQ trigger signal.                      */
-
+// https://www.cnblogs.com/fnlingnzb-learner/p/5984844.html 定时器SIGURG
 /*
 *********************************************************************************************************
 *                                          LOCAL DATA TYPES
@@ -117,8 +117,8 @@ struct  cpu_interrupt_node {
 static  pthread_mutex_t       CPU_InterruptQueueMutex = PTHREAD_MUTEX_INITIALIZER;
 static  pthread_mutexattr_t   CPU_InterruptQueueMutexAttr;
 
-static  CPU_INTERRUPT_NODE   *CPU_InterruptPendListHeadPtr;
-static  CPU_INTERRUPT_NODE   *CPU_InterruptRunningListHeadPtr;
+static  CPU_INTERRUPT_NODE   *CPU_InterruptPendListHeadPtr;     //挂起中断列表
+static  CPU_INTERRUPT_NODE   *CPU_InterruptRunningListHeadPtr;  //正在运行中断列表，挂起中断A优先级高于当前运行中断B会抢占B
 
 static  sigset_t              CPU_IRQ_SigMask;
 
@@ -162,7 +162,7 @@ void  CPU_IntInit (void)
 {
     struct  sigaction  on_isr_trigger_sig_action;
     int     res;
-
+    // 信号处理参考 https://blog.csdn.net/yzy1103203312/article/details/79799197?utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-3.control&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-3.control
 
     CPU_InterruptPendListHeadPtr    = DEF_NULL;
     CPU_InterruptRunningListHeadPtr = DEF_NULL;
@@ -180,8 +180,8 @@ void  CPU_IntInit (void)
     if (res != 0u) {
         raise(SIGABRT);
     }
-    on_isr_trigger_sig_action.sa_flags = SA_NODEFER;
-    on_isr_trigger_sig_action.sa_handler = CPU_IRQ_Handler;
+    on_isr_trigger_sig_action.sa_flags = SA_NODEFER; // 在处理CPU_IRQ_SIG信号未结束前不理会CPU_IRQ_SIG信号的再次到来
+    on_isr_trigger_sig_action.sa_handler = CPU_IRQ_Handler;  // 信号量CPU_IRQ_SIG的处理程序
     res = sigaction(CPU_IRQ_SIG, &on_isr_trigger_sig_action, NULL);
     if (res != 0u) {
         raise(SIGABRT);
@@ -878,11 +878,11 @@ static  void  CPU_ISR_Sched (void)
         ((CPU_InterruptRunningListHeadPtr == DEF_NULL) ||
         (p_isr_node->InterruptPtr->Prio > CPU_InterruptRunningListHeadPtr->InterruptPtr->Prio))) {
         CPU_InterruptPendListHeadPtr = CPU_InterruptPendListHeadPtr->NextPtr;
-        p_isr_node->NextPtr = CPU_InterruptRunningListHeadPtr;
+        p_isr_node->NextPtr = CPU_InterruptRunningListHeadPtr; //抢占式调度，高优先级的挂起中断进入运行态队头
         CPU_InterruptRunningListHeadPtr = p_isr_node;
         pthread_mutex_unlock(&CPU_InterruptQueueMutex);
         CPU_INT_EN();
-        p_isr_node->InterruptPtr->ISR_Fnct();
+        p_isr_node->InterruptPtr->ISR_Fnct(); // 执行中断处理子程序
     } else {
         pthread_mutex_unlock(&CPU_InterruptQueueMutex);
         CPU_INT_EN();

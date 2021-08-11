@@ -152,7 +152,7 @@ typedef            void      (*CPU_FNCT_PTR )(void *p_obj);     /* See Note #2b.
 typedef  struct  CPU_Interrupt  CPU_INTERRUPT;
 
 struct  CPU_Interrupt {
-    void  (*ISR_Fnct)(void);
+    void  (*ISR_Fnct)(void);  // 中断处理函数
     CPU_INT08U      Prio;
     CPU_BOOLEAN     En;
     CPU_CHAR       *NamePtr;

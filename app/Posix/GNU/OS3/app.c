@@ -39,6 +39,8 @@
 #include  <lib_mem.h>
 #include  <lib_math.h>
 
+#include "os_app_hooks.h"
+
 
 /*
 *********************************************************************************************************
@@ -64,6 +66,15 @@ static  CPU_STK_SIZE  App_TaskStartStk[APP_CFG_TASK_START_STK_SIZE];
 */
 
 static  void  App_TaskStart          (void       *p_arg);
+
+
+
+/**
+ * task 2
+ */
+static  OS_TCB        App_TaskStartTCB2;
+static  CPU_STK_SIZE  App_TaskStartStk2[APP_CFG_TASK_START_STK_SIZE];
+static  void  App_TaskStart2          (void       *p_arg);
 
 
 /*
@@ -102,6 +113,21 @@ int  main (void)
                  (void       *) 0,
                  (OS_OPT      )(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
                  (OS_ERR     *)&err);
+    // App_OS_SetAllHooks();
+    OSTaskCreate((OS_TCB     *)&App_TaskStartTCB2,               /* Create the start task                                */
+                 (CPU_CHAR   *)"App Task Start",
+                 (OS_TASK_PTR ) App_TaskStart2,
+                 (void       *) 0,
+                 (OS_PRIO     ) APP_CFG_TASK_START_PRIO,
+                 (CPU_STK    *)&App_TaskStartStk2[0],
+                 (CPU_STK     )(APP_CFG_TASK_START_STK_SIZE / 10u),
+                 (CPU_STK_SIZE) APP_CFG_TASK_START_STK_SIZE,
+                 (OS_MSG_QTY  ) 0,
+                 (OS_TICK     ) 0,
+                 (void       *) 0,
+                 (OS_OPT      )(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
+                 (OS_ERR     *)&err);
+
 
     OSStart(&err);                                              /* Start multitasking (i.e. give control to uC/OS-III). */
 
@@ -146,3 +172,25 @@ static  void  App_TaskStart (void *p_arg)
                       &os_err);
     }
 }
+
+
+static  void  App_TaskStart2 (void *p_arg)
+{
+    OS_ERR      os_err;
+
+    (void)p_arg;                                                /* See Note #1                                          */
+
+    CPU_Init();
+    Mem_Init();                                                 /* Initialize the Memory Management Module              */
+    Math_Init();                                                /* Initialize the Mathematical Module                   */
+
+    OS_CPU_SysTickInit();
+
+    while (DEF_TRUE) {                                          /* Task body, always written as an infinite loop.       */
+        printf("uCOS-III task 2 is running.\n");
+        OSTimeDlyHMSM(0u, 0u, 5u, 0u,
+                      OS_OPT_TIME_HMSM_STRICT,
+                      &os_err);
+    }
+}
+
